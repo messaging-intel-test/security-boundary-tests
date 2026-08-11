@@ -99,10 +99,13 @@ class FollowUpReviewSecurityTests(unittest.TestCase):
             expires_at=200,
         )
         denied = [
-            {"workspace_id": "workspace-b", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "now": 100},
-            {"workspace_id": "workspace-a", "executor_actor_id": "actor-b", "body_digest": "a" * 64, "now": 100},
-            {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "b" * 64, "now": 100},
-            {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "now": 200},
+            {"workspace_id": "workspace-b", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "consent_scope": "crm", "active_consent_count": 1, "now": 100},
+            {"workspace_id": "workspace-a", "executor_actor_id": "actor-b", "body_digest": "a" * 64, "consent_scope": "crm", "active_consent_count": 1, "now": 100},
+            {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "b" * 64, "consent_scope": "crm", "active_consent_count": 1, "now": 100},
+            {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "consent_scope": "message_metadata", "active_consent_count": 1, "now": 100},
+            {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "consent_scope": "crm", "active_consent_count": 0, "now": 100},
+            {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "consent_scope": "crm", "active_consent_count": 2, "now": 100},
+            {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "consent_scope": "crm", "active_consent_count": 1, "now": 200},
         ]
         for request in denied:
             with self.subTest(request=request), self.assertRaises(FollowUpBoundaryViolation):
@@ -114,6 +117,8 @@ class FollowUpReviewSecurityTests(unittest.TestCase):
             workspace_id="workspace-a",
             executor_actor_id="actor-a",
             body_digest="a" * 64,
+            consent_scope="crm",
+            active_consent_count=1,
             now=101,
         )
         self.assertEqual(lease.consumed_at, 101)
@@ -123,8 +128,32 @@ class FollowUpReviewSecurityTests(unittest.TestCase):
                 workspace_id="workspace-a",
                 executor_actor_id="actor-a",
                 body_digest="a" * 64,
+                consent_scope="crm",
+                active_consent_count=1,
                 now=102,
             )
+
+    def test_consent_withdrawal_between_review_and_release_fails_closed(self):
+        lease = ApprovedBodyLease(
+            workspace_id="workspace-a",
+            candidate_id="candidate-1",
+            approval_id="approval-1",
+            claim_id="claim-1",
+            executor_actor_id="actor-a",
+            body_digest="a" * 64,
+            expires_at=200,
+        )
+        with self.assertRaises(FollowUpBoundaryViolation):
+            consume_approved_body(
+                lease,
+                workspace_id="workspace-a",
+                executor_actor_id="actor-a",
+                body_digest="a" * 64,
+                consent_scope="crm",
+                active_consent_count=0,
+                now=101,
+            )
+        self.assertIsNone(lease.consumed_at, "withdrawal race must leave the lease unconsumed")
 
 
 if __name__ == "__main__":

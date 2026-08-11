@@ -117,6 +117,8 @@ def consume_approved_body(
     workspace_id: str,
     executor_actor_id: str,
     body_digest: str,
+    consent_scope: str,
+    active_consent_count: int,
     now: int,
 ) -> None:
     if workspace_id != lease.workspace_id:
@@ -127,6 +129,8 @@ def consume_approved_body(
         raise FollowUpBoundaryViolation("body lease expired")
     if body_digest != lease.body_digest:
         raise FollowUpBoundaryViolation("approved body digest mismatch")
+    if consent_scope != "crm" or active_consent_count != 1:
+        raise FollowUpBoundaryViolation("exactly one current CRM consent is required")
     if lease.consumed_at is not None:
         raise FollowUpBoundaryViolation("approved body lease already consumed")
     lease.consumed_at = now
