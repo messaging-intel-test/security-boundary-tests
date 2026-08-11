@@ -13,4 +13,8 @@ python scripts/verify_repository.py
 
 The initial model is executable rather than a placeholder. Product adapters should be added through focused pull requests while preserving the reference-model tests as an oracle.
 
+The reviewed-follow-up oracle keeps queue/handoff metadata body-free, validates
+the exact claim-derived proposed-body request boundary, and requires the
+single-use approved-body retrieval before a claim can complete as sent.
+
 Tracking: https://github.com/ORESoftware/ai-agent-coordinator.rs/issues/139
