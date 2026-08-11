@@ -46,6 +46,18 @@ class Approval:
     confirmations: frozenset[str]
 
 
+@dataclass
+class ApprovedBodyLease:
+    workspace_id: str
+    candidate_id: str
+    approval_id: str
+    claim_id: str
+    executor_actor_id: str
+    body_digest: str
+    expires_at: int
+    consumed_at: int | None = None
+
+
 _REQUIRED_CONFIRMATIONS = frozenset(
     {"matching_evidence", "non_matching_evidence", "conversation_identity", "exact_body"}
 )
@@ -97,6 +109,27 @@ def revalidate(approval: Approval, facts: ConversationFacts, body: str, *, claim
         raise FollowUpBoundaryViolation("approved body changed")
     if not claim_available:
         raise FollowUpBoundaryViolation("idempotency claim already consumed")
+
+
+def consume_approved_body(
+    lease: ApprovedBodyLease,
+    *,
+    workspace_id: str,
+    executor_actor_id: str,
+    body_digest: str,
+    now: int,
+) -> None:
+    if workspace_id != lease.workspace_id:
+        raise FollowUpBoundaryViolation("body lease workspace mismatch")
+    if executor_actor_id != lease.executor_actor_id:
+        raise FollowUpBoundaryViolation("body lease actor mismatch")
+    if now >= lease.expires_at:
+        raise FollowUpBoundaryViolation("body lease expired")
+    if body_digest != lease.body_digest:
+        raise FollowUpBoundaryViolation("approved body digest mismatch")
+    if lease.consumed_at is not None:
+        raise FollowUpBoundaryViolation("approved body lease already consumed")
+    lease.consumed_at = now
 
 
 def validate_metadata_only(mapping: Mapping[str, object]) -> None:

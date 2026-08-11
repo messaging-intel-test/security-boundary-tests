@@ -1,9 +1,11 @@
 import unittest
 
 from deep_tests.followup_review import (
+    ApprovedBodyLease,
     ConversationFacts,
     FollowUpBoundaryViolation,
     approve,
+    consume_approved_body,
     revalidate,
     validate_metadata_only,
 )
@@ -85,6 +87,44 @@ class FollowUpReviewSecurityTests(unittest.TestCase):
         ):
             with self.subTest(value=value), self.assertRaises(FollowUpBoundaryViolation):
                 validate_metadata_only(value)
+
+    def test_approved_body_lease_is_workspace_actor_digest_and_expiry_bound(self):
+        lease = ApprovedBodyLease(
+            workspace_id="workspace-a",
+            candidate_id="candidate-1",
+            approval_id="approval-1",
+            claim_id="claim-1",
+            executor_actor_id="actor-a",
+            body_digest="a" * 64,
+            expires_at=200,
+        )
+        denied = [
+            {"workspace_id": "workspace-b", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "now": 100},
+            {"workspace_id": "workspace-a", "executor_actor_id": "actor-b", "body_digest": "a" * 64, "now": 100},
+            {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "b" * 64, "now": 100},
+            {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "now": 200},
+        ]
+        for request in denied:
+            with self.subTest(request=request), self.assertRaises(FollowUpBoundaryViolation):
+                consume_approved_body(lease, **request)
+            self.assertIsNone(lease.consumed_at, "failed checks must not consume the lease")
+
+        consume_approved_body(
+            lease,
+            workspace_id="workspace-a",
+            executor_actor_id="actor-a",
+            body_digest="a" * 64,
+            now=101,
+        )
+        self.assertEqual(lease.consumed_at, 101)
+        with self.assertRaises(FollowUpBoundaryViolation):
+            consume_approved_body(
+                lease,
+                workspace_id="workspace-a",
+                executor_actor_id="actor-a",
+                body_digest="a" * 64,
+                now=102,
+            )
 
 
 if __name__ == "__main__":
