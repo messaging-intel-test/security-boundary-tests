@@ -4,10 +4,14 @@ from deep_tests.followup_review import (
     ApprovedBodyLease,
     ConversationFacts,
     FollowUpBoundaryViolation,
+    ProposedBodyBinding,
     approve,
+    authorize_proposed_body,
+    complete_as_sent,
     consume_approved_body,
     revalidate,
     validate_metadata_only,
+    validate_proposed_body_request,
 )
 
 
@@ -106,6 +110,8 @@ class FollowUpReviewSecurityTests(unittest.TestCase):
             {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "consent_scope": "crm", "active_consent_count": 0, "now": 100},
             {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "consent_scope": "crm", "active_consent_count": 2, "now": 100},
             {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "consent_scope": "crm", "active_consent_count": 1, "now": 200},
+            {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "consent_scope": "crm", "active_consent_count": 1, "now": 100, "rule_active": False},
+            {"workspace_id": "workspace-a", "executor_actor_id": "actor-a", "body_digest": "a" * 64, "consent_scope": "crm", "active_consent_count": 1, "now": 100, "rule_is_current": False},
         ]
         for request in denied:
             with self.subTest(request=request), self.assertRaises(FollowUpBoundaryViolation):
@@ -154,6 +160,80 @@ class FollowUpReviewSecurityTests(unittest.TestCase):
                 now=101,
             )
         self.assertIsNone(lease.consumed_at, "withdrawal race must leave the lease unconsumed")
+
+    def test_proposed_body_is_exact_pending_review_only_and_claim_derived(self):
+        binding = ProposedBodyBinding(
+            workspace_id="workspace-a",
+            candidate_id="candidate-1",
+            candidate_version=3,
+            rule_revision_id="rule-revision-7",
+            conversation_fingerprint="a" * 64,
+            expires_at=200,
+        )
+        request = {
+            "candidateVersion": 3,
+            "ruleRevisionId": "rule-revision-7",
+            "conversationFingerprint": "a" * 64,
+        }
+        validate_proposed_body_request(request)
+        with self.assertRaises(FollowUpBoundaryViolation):
+            validate_proposed_body_request({**request, "workspaceId": "workspace-b"})
+
+        valid = {
+            "principal_workspace_id": "workspace-a",
+            "reviewer_authorized": True,
+            "candidate_version": 3,
+            "rule_revision_id": "rule-revision-7",
+            "conversation_fingerprint": "a" * 64,
+            "candidate_status": "pending_review",
+            "active_consent_count": 1,
+            "suppressed": False,
+            "blocked": False,
+            "identity_ambiguous": False,
+            "rule_active": True,
+            "rule_is_current": True,
+            "now": 100,
+        }
+        authorize_proposed_body(binding, **valid)
+        denied = [
+            {"principal_workspace_id": "workspace-b"},
+            {"reviewer_authorized": False},
+            {"candidate_version": 4},
+            {"rule_revision_id": "rule-revision-8"},
+            {"conversation_fingerprint": "b" * 64},
+            {"candidate_status": "approved"},
+            {"active_consent_count": 0},
+            {"suppressed": True},
+            {"rule_active": False},
+            {"rule_is_current": False},
+            {"now": 200},
+        ]
+        for override in denied:
+            with self.subTest(override=override), self.assertRaises(FollowUpBoundaryViolation):
+                authorize_proposed_body(binding, **{**valid, **override})
+
+    def test_sent_completion_requires_the_single_use_body_retrieval(self):
+        lease = ApprovedBodyLease(
+            workspace_id="workspace-a",
+            candidate_id="candidate-1",
+            approval_id="approval-1",
+            claim_id="claim-1",
+            executor_actor_id="actor-a",
+            body_digest="a" * 64,
+            expires_at=200,
+        )
+        with self.assertRaises(FollowUpBoundaryViolation):
+            complete_as_sent(lease)
+        consume_approved_body(
+            lease,
+            workspace_id="workspace-a",
+            executor_actor_id="actor-a",
+            body_digest="a" * 64,
+            consent_scope="crm",
+            active_consent_count=1,
+            now=101,
+        )
+        complete_as_sent(lease)
 
 
 if __name__ == "__main__":
