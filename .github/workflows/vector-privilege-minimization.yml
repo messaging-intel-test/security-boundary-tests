@@ -1,0 +1,47 @@
+name: vector privilege and data minimization
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  privilege-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22.22.1"
+      - name: Prove role and search-document boundaries
+        shell: bash
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const canReadExact = role => ['service_role','vector_admin'].includes(role);
+          for (const role of ['anon','authenticated','browser_client']) assert.equal(canReadExact(role), false);
+          assert.equal(canReadExact('service_role'), true);
+          assert.equal(canReadExact('vector_admin'), true);
+          const forbidden = new Set(['raw_message','provider_session','access_token','refresh_token','clinical_plaintext']);
+          const projectSearchDocument = input => Object.fromEntries(Object.entries(input).filter(([k]) => !forbidden.has(k)));
+          const source = {
+            contact_id: 'contact-1',
+            workspace_id: '11111111-1111-4111-8111-111111111111',
+            summary: 'synthetic searchable summary',
+            raw_message: 'secret',
+            access_token: 'token',
+            provider_session: 'session',
+          };
+          const projected = projectSearchDocument(source);
+          assert.deepEqual(projected, {
+            contact_id: 'contact-1',
+            workspace_id: '11111111-1111-4111-8111-111111111111',
+            summary: 'synthetic searchable summary',
+          });
+          for (const field of forbidden) assert.equal(field in projected, false);
+          NODE
