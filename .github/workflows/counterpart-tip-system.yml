@@ -1,0 +1,23 @@
+name: counterpart-tip security system
+on: { pull_request: {}, push: { branches: [main] }, workflow_dispatch: {} }
+permissions: { contents: read }
+jobs:
+  current-production-boundaries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env: { GH_TOKEN: "${{ secrets.TEST_FLEET_GITHUB_TOKEN || github.token }}" }
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { persist-credentials: false }
+      - name: Test 1 - current tips contain no tracked secret or state material
+        shell: bash
+        run: |
+          set -euo pipefail; p="${GITHUB_REPOSITORY_OWNER%-test}"; gh api --paginate "orgs/$p/repos?per_page=100&type=all" --jq '.[]|select(.archived==false)|[.name,.default_branch]|@tsv' >/tmp/repos; test -s /tmp/repos || { echo "No counterpart repos visible; configure TEST_FLEET_GITHUB_TOKEN" >&2; exit 1; }; n=0; while IFS=$'\t' read -r r b; do if [[ "$r" =~ (infra|interfaces|api|server|core) ]]; then n=$((n+1)); s="$(gh api "repos/$p/$r/commits/$b" --jq .sha)"; paths="$(gh api "repos/$p/$r/git/trees/$s?recursive=1" --jq '.tree[].path')"; ! grep -Eq '(^|/)(\.env|id_rsa|id_ed25519|[^/]+\.pem|[^/]+\.key|terraform\.tfstate)$'<<<"$paths"; fi; done </tmp/repos; test "$n" -gt 0
+      - name: Test 2 - modules-first infra preserves sops-age policy when present
+        shell: bash
+        run: |
+          set -euo pipefail; p="${GITHUB_REPOSITORY_OWNER%-test}"; while IFS=$'\t' read -r r b; do [[ "$r" =~ infra ]]||continue; s="$(gh api "repos/$p/$r/commits/$b" --jq .sha)"; if gh api "repos/$p/$r/contents/.ores-infra.toml?ref=$s" >/dev/null 2>&1; then gh api "repos/$p/$r/contents/.ores-infra.toml?ref=$s" --jq .content|base64 -d >/tmp/i; grep -Eq '^modules_root[[:space:]]*=[[:space:]]*"modules"' /tmp/i; grep -Eq '^environments_root[[:space:]]*=[[:space:]]*"environments"' /tmp/i; grep -Eq '^secrets[[:space:]]*=[[:space:]]*"sops-age"' /tmp/i; fi; done </tmp/repos
+      - name: Test 3 - zed-pkg dependency tip is reachable
+        shell: bash
+        run: |
+          set -euo pipefail; b="$(gh api repos/zed-pkg/zed-cli --jq .default_branch)"; s="$(gh api "repos/zed-pkg/zed-cli/commits/$b" --jq .sha)"; [[ "$s" =~ ^[0-9a-f]{40}$ ]]
